@@ -1,7 +1,9 @@
 package com.svlada.security.endpoint;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import javax.servlet.ServletException;
@@ -72,5 +74,38 @@ public class RefreshTokenEndpoint {
         UserContext userContext = UserContext.create(user.getUsername(), authorities);
 
         return tokenFactory.createAccessJwtToken(userContext);
+    }
+    @RequestMapping(value="/api/auth/token/v2", method=RequestMethod.GET, produces={ MediaType.APPLICATION_JSON_VALUE })
+    public @ResponseBody Map<String, String> refreshTokenV2(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
+        String tokenPayload = tokenExtractor.extract(request.getHeader(WebSecurityConfig.JWT_TOKEN_HEADER_PARAM));
+        
+        RawAccessJwtToken rawToken = new RawAccessJwtToken(tokenPayload);
+        RefreshToken refreshToken = RefreshToken.create(rawToken, jwtSettings.getTokenSigningKey()).orElseThrow(() -> new InvalidJwtToken());
+
+        String jti = refreshToken.getJti();
+        if (!tokenVerifier.verify(jti)) {
+            throw new InvalidJwtToken();
+        }
+
+        String subject = refreshToken.getSubject();
+        User user = userService.getByUsername(subject).orElseThrow(() -> new UsernameNotFoundException("User not found: " + subject));
+
+        if (user.getRoles() == null) throw new InsufficientAuthenticationException("User has no roles assigned");
+        List<GrantedAuthority> authorities = user.getRoles().stream()
+                .map(authority -> new SimpleGrantedAuthority(authority.getRole().authority()))
+                .collect(Collectors.toList());
+
+        UserContext userContext = UserContext.create(user.getUsername(), authorities);
+        
+
+        JwtToken accessToken = tokenFactory.createAccessJwtToken(userContext);
+        JwtToken refreshTokenNew = tokenFactory.createRefreshToken(userContext);
+        
+        Map<String, String> tokenMap = new HashMap<String, String>();
+        
+        tokenMap.put("token", accessToken.getToken());
+        tokenMap.put("refreshToken", refreshTokenNew.getToken());
+        
+        return tokenMap;
     }
 }
